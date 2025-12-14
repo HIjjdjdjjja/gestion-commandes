@@ -2,6 +2,8 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 from datetime import date
+import os
+
 
 DB = "data.db"
 
@@ -12,7 +14,28 @@ def connect():
     return sqlite3.connect(DB, check_same_thread=False)
 
 def init_db():
+    def seed_produits_si_vide(con):
+    # Si la table produits est vide, on charge produits.csv automatiquement
+    n = con.execute("SELECT COUNT(*) FROM produits").fetchone()[0]
+    if n > 0:
+        return
+
+    if not os.path.exists("produits.csv"):
+        return
+
+    df = pd.read_csv("produits.csv")
+    for _, r in df.iterrows():
+        con.execute(
+            "INSERT OR IGNORE INTO produits (fournisseur, produit, ean, conditionnement) VALUES (?, ?, ?, ?)",
+            (str(r["fournisseur"]).strip(),
+             str(r["produit"]).strip(),
+             str(r["ean"]).strip(),
+             int(r["conditionnement"]))
+        )
+    con.commit()
+
     con = connect()
+    seed_produits_si_vide(con)
     con.execute(
         "CREATE TABLE IF NOT EXISTS produits ("
         "id INTEGER PRIMARY KEY AUTOINCREMENT,"
