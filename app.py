@@ -3,105 +3,155 @@ import sqlite3
 import pandas as pd
 from datetime import date
 
-DB_PATH = "data.db"
+DB = "data.db"
 
-# ======================
+# ----------------------
 # BASE DE DONNÉES
-# ======================
-def get_conn():
-    return sqlite3.connect(DB_PATH, check_same_thread=False)
+# ----------------------
+def connect():
+    return sqlite3.connect(DB, check_same_thread=False)
 
 def init_db():
-    conn = get_conn()
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS produits (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            fournisseur TEXT NOT NULL,
-            produit TEXT NOT NULL,
-            code_barres TEXT NOT NULL UNIQUE,
-            conditionnement INTEGER NOT NULL DEFAULT 1,
-            actif INTEGER NOT NULL DEFAULT 1
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS stocks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            mois TEXT NOT NULL,
-            site TEXT NOT NULL,
-            code_barres TEXT NOT NULL,
-            stock INTEGER NOT NULL,
-            UNIQUE(mois, site, code_barres)
-        )
-    """)
-    conn.commit()
-    conn.close()
+    con = connect()
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS produits ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "fournisseur TEXT,"
+        "produit TEXT,"
+        "ean TEXT UNIQUE,"
+        "conditionnement INTEGER)"
+    )
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS stocks ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "mois TEXT,"
+        "site TEXT,"
+        "ean TEXT,"
+        "stock INTEGER,"
+        "UNIQUE(mois, site, ean))"
+    )
+    con.commit()
+    con.close()
 
-def mois_key(d):
+def mois_cle(d):
     return d.replace(day=1).isoformat()
 
-def mois_precedent(mois):
-    annee = int(mois[:4])
-    mois_num = int(mois[5:7])
-    if mois_num == 1:
-        return f"{annee-1}-12-01"
-    return f"{annee}-{str(mois_num-1).zfill(2)}-01"
+def mois_precedent(m):
+    an = int(m[:4])
+    mo = int(m[5:7])
+    if mo == 1:
+        return f"{an-1}-12-01"
+    return f"{an}-{str(mo-1).zfill(2)}-01"
 
-# ======================
-# INTERFACE
-# ======================
-st.set_page_config(page_title="Gestion des commandes", layout="wide")
+# ----------------------
+# APP
+# ----------------------
+st.set_page_config(layout="wide")
+st.title("Stocks → Consommation → Commande")
+
 init_db()
-conn = get_conn()
-
-st.title("Gestion Stocks → Consommation → Commande")
+con = connect()
 
 site = "Gambetta"
 mois = st.date_input("Mois", date.today().replace(day=1))
-mois_courant = mois_key(mois)
-mois_prec = mois_precedent(mois_courant)
+mois_actuel = mois_cle(mois)
+mois_prec = mois_precedent(mois_actuel)
 
-onglets = st.tabs(["Produits", "Saisie stock", "Commande"])
+tabs = st.tabs(["Produits", "Stock mensuel", "Commande"])
 
-# ======================
-# ONGLET PRODUITS
-# ======================
-with onglets[0]:
+# ----------------------
+# PRODUITS
+# ----------------------
+with tabs[0]:
     st.subheader("Produits")
 
-    with st.form("ajout_produit"):
-        fournisseur = st.text_input("Fournisseur")
-        produit = st.text_input("Produit")
-        code = st.text_input("Code-barres")
-        conditionnement = st.number_input("Conditionnement", min_value=1, value=1)
-        ajouter = st.form_submit_button("Ajouter")
+    with st.form("ajout"):
+        f = st.text_input("Fournisseur")
+        p = st.text_input("Produit")
+        e = st.text_input("Code-barres")
+        c = st.number_input("Conditionnement", 1, 100, 1)
+        ok = st.form_submit_button("Ajouter")
 
-        if ajouter and fournisseur and produit and code:
-            conn.execute("""
-                INSERT OR IGNORE INTO produits
-                (fournisseur, produit, code_barres, conditionnement)
-                VALUES (?, ?, ?, ?)
-            """, (fournisseur, produit, code, conditionnement))
-            conn.commit()
+        if ok and f and p and e:
+            con.execute(
+                "INSERT OR IGNORE INTO produits "
+                "(fournisseur, produit, ean, conditionnement) "
+                "VALUES (?, ?, ?, ?)",
+                (f, p, e, c)
+            )
+            con.commit()
 
-    df_produits = pd.read_sql(
-        "SELECT fournisseur, produit, code_barres, conditionnement FROM produits WHERE actif = 1",
-        conn
+    dfp = pd.read_sql("SELECT fournisseur, produit, ean, conditionnement FROM produits", con)
+    st.dataframe(dfp, use_container_width=True)
+
+# ----------------------
+# SAISIE STOCK
+# ----------------------
+with tabs[1]:
+    st.subheader("Stock du mois")
+
+    produits = pd.read_sql("SELECT * FROM produits", con)
+
+    sp = pd.read_sql(
+        "SELECT ean, stock FROM stocks WHERE mois=? AND site=?",
+        con, params=(mois_prec, site)
     )
-    st.dataframe(df_produits, use_container_width=True)
-
-# ======================
-# ONGLET SAISIE STOCK
-# ======================
-with onglets[1]:
-    st.subheader("Saisie du stock du mois")
-
-    produits = pd.read_sql("SELECT * FROM produits WHERE actif = 1", conn)
-
-    stock_prec = pd.read_sql(
-        "SELECT code_barres, stock FROM stocks WHERE mois=? AND site=?",
-        conn, params=(mois_prec, site)
+    sa = pd.read_sql(
+        "SELECT ean, stock FROM stocks WHERE mois=? AND site=?",
+        con, params=(mois_actuel, site)
     )
-    stock_prec_map = dict(zip(stock_prec.code_barres, stock_prec.stock))
 
-    stock_actuel = pd.read_sql(
-        "SELECT code_barres, stock FROM s_
+    sp_map = dict(zip(sp.ean, sp.stock))
+    sa_map = dict(zip(sa.ean, sa.stock))
+
+    lignes = []
+    for _, r in produits.iterrows():
+        prev = sp_map.get(r.ean, 0)
+        cur = sa_map.get(r.ean, 0)
+        conso = max(prev - cur, 0)
+        colis = (conso + r.conditionnement - 1) // r.conditionnement
+
+        lignes.append({
+            "Produit": r.produit,
+            "EAN": r.ean,
+            "Stock précédent": prev,
+            "Stock du mois": cur,
+            "Consommation": conso,
+            "Commande colis": colis,
+            "Commande unités": colis * r.conditionnement
+        })
+
+    df = pd.DataFrame(lignes)
+
+    edit = st.data_editor(
+        df,
+        disabled=["Produit", "EAN", "Stock précédent", "Consommation", "Commande colis", "Commande unités"],
+        use_container_width=True
+    )
+
+    if st.button("Enregistrer"):
+        for _, r in edit.iterrows():
+            con.execute(
+                "INSERT INTO stocks (mois, site, ean, stock) "
+                "VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(mois, site, ean) DO UPDATE SET stock=excluded.stock",
+                (mois_actuel, site, r["EAN"], int(r["Stock du mois"]))
+            )
+        con.commit()
+        st.success("Stocks enregistrés")
+
+# ----------------------
+# COMMANDE
+# ----------------------
+with tabs[2]:
+    st.subheader("Commande à passer")
+    dfc = df[df["Commande unités"] > 0]
+    st.dataframe(dfc, use_container_width=True)
+    st.download_button(
+        "Télécharger CSV",
+        dfc.to_csv(index=False).encode("utf-8"),
+        "commande.csv",
+        "text/csv"
+    )
+
+con.close()
