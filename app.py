@@ -171,9 +171,9 @@ pandas
 # Application de gestion des commandes (sans Excel)
 
 ## Principe
-- Vous saisissez uniquement le stock du mois en cours
-- La consommation est calculée automatiquement
-- La commande est arrondie au conditionnement
+ Vous saisissez uniquement le stock du mois en cours
+ La consommation est calculée automatiquement
+ La commande est arrondie au conditionnement
 
 ## Lancer en local
 ```bash
